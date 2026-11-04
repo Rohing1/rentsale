@@ -6,13 +6,18 @@
 
 > 当前范围是单组织、单库存池的管理后台。商品已预留 `location` 字段；多门店、商户隔离、电子合同和支付网关在下一阶段扩展。
 
-## 支持项目
+## ☕ 赞赏支持
 
-如果 RentSale 对你有帮助，欢迎使用微信扫码赞助，感谢对项目持续维护的支持。
+<table>
+  <tr>
+    <td align="center" width="360">
+      <img src="./assets/wechat-pay.jpg" alt="微信支付赞赏二维码" width="260" /><br />
+      <sub>微信支付</sub>
+    </td>
+  </tr>
+</table>
 
-<p align="center">
-  <img src="./assets/wechat-pay.jpg" alt="微信支付赞助二维码" width="320" />
-</p>
+> 本项目免费开源，若它对你有帮助，欢迎扫码赞赏。每一份支持都会用于项目的持续维护与改进，感谢支持！
 
 ## 已实现
 
