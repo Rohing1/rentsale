@@ -194,3 +194,7 @@ go vet ./...
 - 逾期计费、续租、部分交接、损坏扣费、争议工单与通知任务。
 
 业务痛点、已做优化和后续优先级见 [docs/pain-points-and-optimization.md](docs/pain-points-and-optimization.md)。
+
+## 许可证
+
+本项目采用 [GNU General Public License v3.0](LICENSE)（GPL-3.0）许可证。你可以在遵守 GPL-3.0 条款的前提下使用、修改和分发本项目；若分发修改版或衍生作品，须同时提供对应源代码，并以 GPL-3.0 发布。
