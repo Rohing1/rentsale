@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify source
+        run: |
+          go test ./...
+          go vet ./...
+
+      - name: Build Windows release package
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+          VERSION: ${{ github.ref_name }}
+        run: |
+          package_dir="dist/rentsale-${VERSION}-windows-amd64"
+          mkdir -p "$package_dir"
+          go build -buildvcs=false -trimpath -ldflags="-s -w" -o "$package_dir/lease-platform.exe" ./cmd/server
+          cp .env.local.example "$package_dir/lease-platform.env.example"
+          cp README.md "$package_dir/README.md"
+          (
+            cd dist
+            zip -r "rentsale-${VERSION}-windows-amd64.zip" "rentsale-${VERSION}-windows-amd64"
+            sha256sum "rentsale-${VERSION}-windows-amd64.zip" > "rentsale-${VERSION}-windows-amd64.sha256"
+          )
+
+      - name: Upload release package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rentsale-${{ github.ref_name }}-windows-amd64
+          path: |
+            dist/rentsale-${{ github.ref_name }}-windows-amd64.zip
+            dist/rentsale-${{ github.ref_name }}-windows-amd64.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            "dist/rentsale-${{ github.ref_name }}-windows-amd64.zip" \
+            "dist/rentsale-${{ github.ref_name }}-windows-amd64.sha256" \
+            --title "RentSale ${{ github.ref_name }}" \
+            --generate-notes

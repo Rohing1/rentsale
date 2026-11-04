@@ -1,5 +1,7 @@
 # RentSale 租赁售卖一体化平台
 
+[![CI](https://github.com/Rohing1/rentsale/actions/workflows/ci.yml/badge.svg)](https://github.com/Rohing1/rentsale/actions/workflows/ci.yml)
+
 一个面向设备、车辆、房源等可计量资产的 Go + PostgreSQL 管理平台。首版重点解决“同一库存既被卖出又被未来租单占用”的问题，并提供商品、客户、订单、收退款与基础运营看板。
 
 > 当前范围是单组织、单库存池的管理后台。商品已预留 `location` 字段；多门店、商户隔离、电子合同和支付网关在下一阶段扩展。
@@ -139,6 +141,12 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
 ```
 
 把 `lease-platform.exe` 单独复制到 Windows 目标机即可；不要设置 `WEB_DIR`，也不要将数据库密码编译进 EXE。通过 Windows 环境变量、受保护的服务配置或密钥管理系统提供 `DATABASE_URL`（或 `DB_*`）、`APP_API_KEY` 等运行配置。该 EXE 启动的是本地 Web 服务，访问 `http://127.0.0.1:8080` 使用后台。
+
+## 自动构建与发布
+
+- 推送到 `main` 或提交 Pull Request 时，GitHub Actions 自动运行测试、静态检查，并构建 Windows x64 EXE 作为下载产物。
+- 推送 `v*` 标签（例如 `v0.1.0`）时，GitHub Actions 会再次验收代码并自动创建 Release，上传 Windows x64 ZIP 包和 SHA-256 校验文件。
+- Release ZIP 包不含真实数据库配置或密钥，内含 EXE、环境变量模板和 README。
 
 ## 数据库升级提醒
 
