@@ -87,3 +87,15 @@ func TestOrderRequiresIdempotencyKeyBeforeStoreAccess(t *testing.T) {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
 }
+
+func TestBillingReportRejectsInvalidPeriodBeforeStoreAccess(t *testing.T) {
+	handler := New(config.Config{WebDir: "."}, nil)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/billing-reports?period=fortnight&date=2026-11-04", nil)
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnprocessableEntity)
+	}
+}

@@ -4,6 +4,8 @@ const state = {
   orders: [],
   orderItems: new Map(),
   dashboard: null,
+  billingReport: null,
+  billingRequestID: 0,
 };
 
 const currency = new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY" });
@@ -31,11 +33,14 @@ function bindEvents() {
   $("#customer-search").addEventListener("input", debounce(() => loadCustomers(), 220));
   $("#order-type-filter").addEventListener("change", loadOrders);
   $("#order-status-filter").addEventListener("change", loadOrders);
+  $("#billing-period").addEventListener("change", loadBillingReport);
+  $("#billing-date").addEventListener("change", loadBillingReport);
+  $("#billing-refresh-button").addEventListener("click", loadBillingReport);
   document.addEventListener("click", handleDelegatedClick);
 }
 
 async function refreshAll() {
-  await Promise.all([loadDashboard(), loadProducts(), loadCustomers(), loadOrders()]);
+  await Promise.all([loadDashboard(), loadBillingReport(), loadProducts(), loadCustomers(), loadOrders()]);
 }
 
 async function api(path, options = {}) {
@@ -63,6 +68,51 @@ async function loadDashboard() {
     ];
     $("#dashboard-metrics").innerHTML = metrics.map(([label, value, note]) => `<article class="metric"><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`).join("");
   } catch (error) { showError(error); }
+}
+
+async function loadBillingReport() {
+  const requestID = ++state.billingRequestID;
+  try {
+    const params = new URLSearchParams({
+      period: $("#billing-period").value,
+      date: $("#billing-date").value,
+    });
+    const report = await api(`/api/billing-reports?${params.toString()}`);
+    if (requestID !== state.billingRequestID) return;
+    state.billingReport = report;
+    renderBillingReport();
+  } catch (error) {
+    if (requestID === state.billingRequestID) showError(error);
+  }
+}
+
+function renderBillingReport() {
+  const report = state.billingReport;
+  if (!report) return;
+  const metrics = [
+    ["收款", money(report.charge_cents), `${report.charge_count} 笔收款`],
+    ["退款", money(report.refund_cents), `${report.refund_count} 笔退款`],
+    ["净收款", money(report.net_cents), "收款减退款的现金净额"],
+    ["关联订单", report.order_count, `共 ${report.transaction_count} 笔流水`],
+  ];
+  $("#billing-metrics").innerHTML = metrics.map(([label, value, note]) => `<article class="metric"><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`).join("");
+  const period = billingPeriodLabel(report.period);
+  const suffix = report.truncated ? `，仅展示前 ${report.items.length} 笔` : "";
+  if ($("#billing-date").value !== report.anchor_date) $("#billing-date").value = report.anchor_date;
+  $("#billing-period-range").textContent = `${period}：${report.period_start} 至 ${report.period_end}${suffix}`;
+  const table = $("#billing-table");
+  if (!report.items.length) {
+    table.innerHTML = `<tr><td colspan="6" class="empty">该周期内还没有收退款流水。</td></tr>`;
+    return;
+  }
+  table.innerHTML = report.items.map((entry) => {
+    const direction = entry.direction === "refund" ? '<span class="tag sale">退款</span>' : '<span class="tag rent">收款</span>';
+    const signedAmount = entry.direction === "refund" ? `-${money(entry.amount_cents)}` : money(entry.amount_cents);
+    const orderType = entry.order_type === "rental" ? "租赁" : "销售";
+    const reference = escapeHTML(entry.reference);
+    const note = entry.note ? `<div class="item-subtitle">${escapeHTML(entry.note)}</div>` : "";
+    return `<tr><td>${billingDateTime(entry.created_at, report.business_time_zone)}</td><td>${direction}</td><td><div class="item-title">${escapeHTML(entry.order_no)}</div><div class="item-subtitle">${orderType}</div></td><td>${escapeHTML(entry.customer_name)}</td><td class="${entry.direction === "refund" ? "billing-refund" : "billing-charge"}"><strong>${signedAmount}</strong></td><td>${reference}${note}</td></tr>`;
+  }).join("");
 }
 
 async function loadProducts() {
@@ -289,15 +339,16 @@ async function recordPayment(orderID) {
   if (amount === null) return;
   const reference = window.prompt("支付流水号或业务参考号（必填）：", "") ?? "";
   if (!reference.trim()) { showError(new Error("请填写不可重复的支付流水号或业务参考号")); return; }
-  try { await api(`/api/orders/${orderID}/payments`, { method: "POST", body: JSON.stringify({ direction, amount_cents: cents(amount), reference: reference.trim(), note: "后台手工登记" }) }); showSuccess("支付流水已登记"); await loadOrders(); } catch (error) { showError(error); }
+  try { await api(`/api/orders/${orderID}/payments`, { method: "POST", body: JSON.stringify({ direction, amount_cents: cents(amount), reference: reference.trim(), note: "后台手工登记" }) }); showSuccess("支付流水已登记"); await Promise.all([loadOrders(), loadBillingReport()]); } catch (error) { showError(error); }
 }
 
 function switchView(view) {
-  const title = { dashboard: "概览", products: "商品与库存", customers: "客户", "new-order": "新建订单", orders: "订单中心" }[view] || "RentSale";
+  const title = { dashboard: "概览", billing: "账单报表", products: "商品与库存", customers: "客户", "new-order": "新建订单", orders: "订单中心" }[view] || "RentSale";
   $("#page-title").textContent = title;
   document.querySelectorAll(".view").forEach((element) => element.classList.toggle("active", element.dataset.view === view));
   document.querySelectorAll(".nav-link").forEach((element) => element.classList.toggle("active", element.dataset.viewLink === view));
   if (view === "new-order") renderOrderItems();
+  if (view === "billing") loadBillingReport();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -315,6 +366,11 @@ function money(centsValue) { return currency.format((Number(centsValue) || 0) / 
 function cents(value) { const amount = Number(value); if (!Number.isFinite(amount) || amount < 0) throw new Error("金额必须是大于或等于 0 的数字"); return Math.round(amount * 100); }
 function integer(value) { const parsed = Number(value); return Number.isInteger(parsed) ? parsed : 0; }
 function dateTime(value) { try { return dateFormatter.format(new Date(value)); } catch { return "—"; } }
+function billingDateTime(value, timeZone) {
+  try {
+    return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short", timeZone: timeZone || undefined }).format(new Date(value));
+  } catch { return dateTime(value); }
+}
 function toDateInput(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -332,6 +388,7 @@ async function runButtonBusy(button, action) {
 }
 function statusLabel(status) { return ({ confirmed: "已确认", checked_out: "租赁中", returned: "已归还", completed: "已完成", cancelled: "已取消" })[status] || status; }
 function paymentLabel(status) { return ({ unpaid: "未收款", partial: "部分收款", paid: "已收清", refunded: "已退款" })[status] || status; }
+function billingPeriodLabel(period) { return ({ day: "日账单", week: "周账单", month: "月账单", quarter: "季度账单", year: "年账单" })[period] || "账单"; }
 function escapeHTML(value) { return String(value ?? "").replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", '"': "&quot;" }[char])); }
 function debounce(fn, wait) { let timeout; return (...args) => { window.clearTimeout(timeout); timeout = window.setTimeout(() => fn(...args), wait); }; }
 function showSuccess(message) { showToast(message, "success"); }

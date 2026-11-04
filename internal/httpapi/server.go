@@ -36,6 +36,7 @@ func New(cfg config.Config, repository *store.Store) http.Handler {
 	mux.HandleFunc("/healthz", server.handleHealth)
 	mux.HandleFunc("/readyz", server.handleReady)
 	mux.HandleFunc("/api/dashboard", server.handleDashboard)
+	mux.HandleFunc("/api/billing-reports", server.handleBillingReport)
 	mux.HandleFunc("/api/products", server.handleProducts)
 	mux.HandleFunc("/api/products/", server.handleProductByID)
 	mux.HandleFunc("/api/customers", server.handleCustomers)
@@ -115,6 +116,20 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, dashboard)
+}
+
+func (s *Server) handleBillingReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	report, err := s.store.BillingReport(r.Context(), r.URL.Query().Get("period"), r.URL.Query().Get("date"))
+	if err != nil {
+		s.respondStoreError(w, err)
+		return
+	}
+	report.BusinessTimeZone = s.config.BusinessTimeZone
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handleProducts(w http.ResponseWriter, r *http.Request) {

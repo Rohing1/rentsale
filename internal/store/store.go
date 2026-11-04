@@ -15,6 +15,7 @@ import (
 )
 
 const dateLayout = "2006-01-02"
+const maxInventoryQuantity int64 = 2_147_483_647
 
 const productColumns = `
 id, sku, name, product_type, category, location, description,
@@ -116,6 +117,9 @@ func (s *Store) AdjustStock(ctx context.Context, productID int64, input StockAdj
 	if input.Delta == 0 {
 		return Product{}, ValidationError{Message: "库存调整数量不能为 0"}
 	}
+	if int64(input.Delta) > maxInventoryQuantity || int64(input.Delta) < -maxInventoryQuantity {
+		return Product{}, ValidationError{Message: "库存调整数量超出系统支持范围"}
+	}
 	if len(strings.TrimSpace(input.Reason)) > 500 {
 		return Product{}, ValidationError{Message: "库存调整原因不能超过 500 个字符"}
 	}
@@ -140,10 +144,14 @@ func (s *Store) AdjustStock(ctx context.Context, productID int64, input StockAdj
 	if err != nil {
 		return Product{}, err
 	}
-	newStock := product.StockOnHand + input.Delta
-	if newStock < 0 {
+	newStock64 := int64(product.StockOnHand) + int64(input.Delta)
+	if newStock64 < 0 {
 		return Product{}, ValidationError{Message: "调整后库存不能小于 0"}
 	}
+	if newStock64 > maxInventoryQuantity {
+		return Product{}, ValidationError{Message: "调整后库存超出系统支持范围"}
+	}
+	newStock := int(newStock64)
 	peak, err := rentalPeakFromToday(ctx, tx, product.ID)
 	if err != nil {
 		return Product{}, err
@@ -520,6 +528,15 @@ func (s *Store) TransitionOrder(ctx context.Context, orderID int64, targetStatus
 		}
 		return Order{}, fmt.Errorf("lock order: %w", err)
 	}
+	// A client may lose the HTTP response after the status transaction commits.
+	// Treat a retry of an already-completed transition as success instead of
+	// asking an operator to guess whether the first request took effect.
+	if currentStatus == targetStatus && targetStatus != "confirmed" {
+		if err := tx.Commit(ctx); err != nil {
+			return Order{}, fmt.Errorf("commit idempotent order transition replay: %w", err)
+		}
+		return s.GetOrder(ctx, orderID)
+	}
 	if !isAllowedTransition(orderType, currentStatus, targetStatus) {
 		return Order{}, ValidationError{Message: fmt.Sprintf("订单状态不能从 %s 变更为 %s", currentStatus, targetStatus)}
 	}
@@ -559,8 +576,12 @@ func (s *Store) TransitionOrder(ctx context.Context, orderID int64, targetStatus
 
 	if orderType == "sale" && targetStatus == "cancelled" {
 		for _, line := range lines {
-			if _, err := loadProductForUpdate(ctx, tx, line.ProductID); err != nil {
+			product, err := loadProductForUpdate(ctx, tx, line.ProductID)
+			if err != nil {
 				return Order{}, err
+			}
+			if int64(product.StockOnHand)+int64(line.Quantity) > maxInventoryQuantity {
+				return Order{}, ValidationError{Message: fmt.Sprintf("取消销售订单后商品 %s 的库存会超出系统支持范围", product.Name)}
 			}
 			if _, err := tx.Exec(ctx, `UPDATE products SET stock_on_hand = stock_on_hand + $1, updated_at = NOW() WHERE id = $2`, line.Quantity, line.ProductID); err != nil {
 				return Order{}, fmt.Errorf("restore cancelled sale inventory: %w", err)
@@ -649,8 +670,11 @@ func (s *Store) RecordPayment(ctx context.Context, orderID int64, input PaymentI
 		return Payment{}, fmt.Errorf("lock payment order: %w", err)
 	}
 	existingPayment, err := scanPayment(tx.QueryRow(ctx, `SELECT id, order_id, direction, amount_cents, reference, note, created_at
-		FROM payments WHERE order_id = $1 AND reference = $2`, orderID, input.Reference))
+		FROM payments WHERE reference = $1`, input.Reference))
 	if err == nil {
+		if existingPayment.OrderID != orderID {
+			return Payment{}, ConflictError{Message: "该支付流水号已用于其他订单，不能重复入账"}
+		}
 		if existingPayment.Direction != input.Direction || existingPayment.AmountCents != input.AmountCents {
 			return Payment{}, ValidationError{Message: "该支付流水号已用于不同的收退款记录"}
 		}
@@ -691,6 +715,10 @@ func (s *Store) RecordPayment(ctx context.Context, orderID int64, input PaymentI
 		VALUES ($1,$2,$3,$4,$5)
 		RETURNING id, order_id, direction, amount_cents, reference, note, created_at`, orderID, input.Direction, input.AmountCents, input.Reference, input.Note))
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Payment{}, ConflictError{Message: "该支付流水号已用于其他订单，不能重复入账"}
+		}
 		return Payment{}, fmt.Errorf("record payment: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE orders SET paid_cents = $1, payment_status = $2, updated_at = NOW(), version = version + 1 WHERE id = $3`, newPaid, paymentStatus, orderID); err != nil {
@@ -703,6 +731,13 @@ func (s *Store) RecordPayment(ctx context.Context, orderID int64, input PaymentI
 }
 
 func (s *Store) ListPayments(ctx context.Context, orderID int64) ([]Payment, error) {
+	var existingOrderID int64
+	if err := s.pool.QueryRow(ctx, `SELECT id FROM orders WHERE id = $1`, orderID).Scan(&existingOrderID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("check payment order: %w", err)
+	}
 	rows, err := s.pool.Query(ctx, `SELECT id, order_id, direction, amount_cents, reference, note, created_at
 		FROM payments WHERE order_id = $1 ORDER BY created_at DESC, id DESC`, orderID)
 	if err != nil {
@@ -721,6 +756,149 @@ func (s *Store) ListPayments(ctx context.Context, orderID int64) ([]Payment, err
 		return nil, fmt.Errorf("iterate payments: %w", err)
 	}
 	return payments, nil
+}
+
+// BillingReport returns the cash ledger for one business period. Dates are
+// evaluated by PostgreSQL in the connection's configured business time zone.
+// The end date shown to callers is inclusive; the SQL query uses the following
+// day as an exclusive boundary so entries at 00:00 are assigned correctly.
+func (s *Store) BillingReport(ctx context.Context, period, anchorDateRaw string) (BillingReport, error) {
+	period = strings.ToLower(strings.TrimSpace(period))
+	if period == "" {
+		period = "day"
+	}
+	if !isBillingPeriod(period) {
+		return BillingReport{}, ValidationError{Message: "period 只能为 day、week、month、quarter 或 year"}
+	}
+
+	var anchorDate time.Time
+	if strings.TrimSpace(anchorDateRaw) == "" {
+		var today string
+		if err := s.pool.QueryRow(ctx, `SELECT CURRENT_DATE::text`).Scan(&today); err != nil {
+			return BillingReport{}, fmt.Errorf("get billing business date: %w", err)
+		}
+		parsed, err := parseDate(today)
+		if err != nil {
+			return BillingReport{}, fmt.Errorf("parse billing business date: %w", err)
+		}
+		anchorDate = parsed
+	} else {
+		parsed, err := parseDate(anchorDateRaw)
+		if err != nil {
+			return BillingReport{}, ValidationError{Message: "date 必须为 YYYY-MM-DD"}
+		}
+		anchorDate = parsed
+	}
+
+	startDate, endExclusive, err := billingPeriodBounds(period, anchorDate)
+	if err != nil {
+		return BillingReport{}, err
+	}
+	report := BillingReport{
+		Period:      period,
+		AnchorDate:  anchorDate.Format(dateLayout),
+		PeriodStart: startDate.Format(dateLayout),
+		PeriodEnd:   endExclusive.AddDate(0, 0, -1).Format(dateLayout),
+		Items:       make([]BillingEntry, 0),
+	}
+
+	if err := s.pool.QueryRow(ctx, `SELECT
+		COALESCE(SUM(CASE WHEN direction = 'charge' THEN amount_cents ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN direction = 'refund' THEN amount_cents ELSE 0 END), 0),
+		COUNT(*) FILTER (WHERE direction = 'charge'),
+		COUNT(*) FILTER (WHERE direction = 'refund'),
+		COUNT(*),
+		COUNT(DISTINCT order_id)
+		FROM payments
+		WHERE created_at >= $1::date AND created_at < $2::date`,
+		startDate.Format(dateLayout), endExclusive.Format(dateLayout),
+	).Scan(
+		&report.ChargeCents,
+		&report.RefundCents,
+		&report.ChargeCount,
+		&report.RefundCount,
+		&report.TransactionCount,
+		&report.OrderCount,
+	); err != nil {
+		return BillingReport{}, fmt.Errorf("summarize billing report: %w", err)
+	}
+	if report.ChargeCents >= report.RefundCents {
+		report.NetCents = report.ChargeCents - report.RefundCents
+	} else {
+		report.NetCents = -(report.RefundCents - report.ChargeCents)
+	}
+
+	const billingReportItemLimit = 500
+	rows, err := s.pool.Query(ctx, `SELECT
+		p.id, p.order_id, o.order_no, o.order_type, c.full_name,
+		p.direction, p.amount_cents, p.reference, p.note, p.created_at
+		FROM payments p
+		JOIN orders o ON o.id = p.order_id
+		JOIN customers c ON c.id = o.customer_id
+		WHERE p.created_at >= $1::date AND p.created_at < $2::date
+		ORDER BY p.created_at DESC, p.id DESC
+		LIMIT $3`,
+		startDate.Format(dateLayout), endExclusive.Format(dateLayout), billingReportItemLimit)
+	if err != nil {
+		return BillingReport{}, fmt.Errorf("list billing entries: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var entry BillingEntry
+		if err := rows.Scan(
+			&entry.ID,
+			&entry.OrderID,
+			&entry.OrderNo,
+			&entry.OrderType,
+			&entry.CustomerName,
+			&entry.Direction,
+			&entry.AmountCents,
+			&entry.Reference,
+			&entry.Note,
+			&entry.CreatedAt,
+		); err != nil {
+			return BillingReport{}, fmt.Errorf("scan billing entry: %w", err)
+		}
+		report.Items = append(report.Items, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return BillingReport{}, fmt.Errorf("iterate billing entries: %w", err)
+	}
+	report.Truncated = report.TransactionCount > int64(len(report.Items))
+	return report, nil
+}
+
+func billingPeriodBounds(period string, anchorDate time.Time) (time.Time, time.Time, error) {
+	anchorDate = time.Date(anchorDate.Year(), anchorDate.Month(), anchorDate.Day(), 0, 0, 0, 0, time.UTC)
+	switch period {
+	case "day":
+		return anchorDate, anchorDate.AddDate(0, 0, 1), nil
+	case "week":
+		daysSinceMonday := (int(anchorDate.Weekday()) + 6) % 7
+		start := anchorDate.AddDate(0, 0, -daysSinceMonday)
+		return start, start.AddDate(0, 0, 7), nil
+	case "month":
+		start := time.Date(anchorDate.Year(), anchorDate.Month(), 1, 0, 0, 0, 0, time.UTC)
+		return start, start.AddDate(0, 1, 0), nil
+	case "quarter":
+		quarterMonth := time.Month(((int(anchorDate.Month()) - 1) / 3 * 3) + 1)
+		start := time.Date(anchorDate.Year(), quarterMonth, 1, 0, 0, 0, 0, time.UTC)
+		return start, start.AddDate(0, 3, 0), nil
+	case "year":
+		start := time.Date(anchorDate.Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
+		return start, start.AddDate(1, 0, 0), nil
+	default:
+		return time.Time{}, time.Time{}, ValidationError{Message: "period 只能为 day、week、month、quarter 或 year"}
+	}
+}
+
+func isBillingPeriod(period string) bool {
+	switch period {
+	case "day", "week", "month", "quarter", "year":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Store) Dashboard(ctx context.Context) (Dashboard, error) {
@@ -769,6 +947,9 @@ func validateProductInput(input CreateProductInput) error {
 	}
 	if input.DailyRentCents < 0 || input.SalePriceCents < 0 || input.DepositCents < 0 || input.StockOnHand < 0 {
 		return ValidationError{Message: "价格和库存不能为负数"}
+	}
+	if int64(input.StockOnHand) > maxInventoryQuantity {
+		return ValidationError{Message: "现货数量超出系统支持范围"}
 	}
 	return nil
 }
@@ -1073,6 +1254,8 @@ func mapDatabaseError(err error) error {
 			return ValidationError{Message: "提交的数据不符合业务约束"}
 		case "22001":
 			return ValidationError{Message: "字段长度超出限制"}
+		case "22003":
+			return ValidationError{Message: "数字超出系统支持范围"}
 		}
 	}
 	return err

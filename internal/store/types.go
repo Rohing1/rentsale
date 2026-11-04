@@ -176,3 +176,37 @@ type Dashboard struct {
 	TodaySalesCents   int64 `json:"today_sales_cents"`
 	LowStockProducts  int   `json:"low_stock_products"`
 }
+
+// BillingReport is a cash-flow statement built from the immutable payment
+// ledger. Amounts include both rent/sale payments and deposits because the
+// current payment ledger does not split those categories yet.
+type BillingReport struct {
+	Period           string         `json:"period"`
+	AnchorDate       string         `json:"anchor_date"`
+	PeriodStart      string         `json:"period_start"`
+	PeriodEnd        string         `json:"period_end"`
+	BusinessTimeZone string         `json:"business_time_zone"`
+	ChargeCents      int64          `json:"charge_cents"`
+	RefundCents      int64          `json:"refund_cents"`
+	NetCents         int64          `json:"net_cents"`
+	ChargeCount      int64          `json:"charge_count"`
+	RefundCount      int64          `json:"refund_count"`
+	TransactionCount int64          `json:"transaction_count"`
+	OrderCount       int64          `json:"order_count"`
+	Truncated        bool           `json:"truncated"`
+	Items            []BillingEntry `json:"items"`
+}
+
+// BillingEntry is one payment or refund in a billing report.
+type BillingEntry struct {
+	ID           int64     `json:"id"`
+	OrderID      int64     `json:"order_id"`
+	OrderNo      string    `json:"order_no"`
+	OrderType    string    `json:"order_type"`
+	CustomerName string    `json:"customer_name"`
+	Direction    string    `json:"direction"`
+	AmountCents  int64     `json:"amount_cents"`
+	Reference    string    `json:"reference"`
+	Note         string    `json:"note"`
+	CreatedAt    time.Time `json:"created_at"`
+}

@@ -22,16 +22,19 @@ func main() {
 		log.Fatalf("configuration error: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	pool, err := database.Connect(ctx, cfg.DatabaseURL, cfg.BusinessTimeZone)
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	pool, err := database.Connect(connectCtx, cfg.DatabaseURL, cfg.BusinessTimeZone)
+	connectCancel()
 	if err != nil {
 		log.Fatalf("database unavailable: %v", err)
 	}
 	defer pool.Close()
 
 	if cfg.AutoMigrate {
-		if err := database.Migrate(ctx, pool); err != nil {
+		migrationCtx, migrationCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		err := database.Migrate(migrationCtx, pool)
+		migrationCancel()
+		if err != nil {
 			log.Fatalf("database migration failed: %v", err)
 		}
 	}

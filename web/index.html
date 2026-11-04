@@ -16,6 +16,7 @@
         </a>
         <nav aria-label="主导航">
           <button class="nav-link active" data-view-link="dashboard">概览</button>
+          <button class="nav-link" data-view-link="billing">账单报表</button>
           <button class="nav-link" data-view-link="products">商品与库存</button>
           <button class="nav-link" data-view-link="customers">客户</button>
           <button class="nav-link" data-view-link="new-order">新建订单</button>
@@ -75,6 +76,43 @@
               </ul>
             </article>
           </div>
+        </section>
+
+        <section class="view" data-view="billing">
+          <div class="section-intro row-intro">
+            <div>
+              <p class="eyebrow">收退款现金流水</p>
+              <h2>账单报表</h2>
+              <p>按登记收退款的业务日期统计；金额包含租金、销售款与押金，退款会从净收款中扣除。</p>
+            </div>
+            <div class="filters billing-filters">
+              <select id="billing-period" aria-label="账单周期">
+                <option value="day">日账单</option>
+                <option value="week">周账单</option>
+                <option value="month">月账单</option>
+                <option value="quarter">季度账单</option>
+                <option value="year">年账单</option>
+              </select>
+              <input id="billing-date" type="date" aria-label="账单基准日期" />
+              <button class="button secondary" id="billing-refresh-button" type="button">查询</button>
+            </div>
+          </div>
+          <div class="metrics" id="billing-metrics"></div>
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">收退款明细</p>
+                <h3>账单流水</h3>
+                <p id="billing-period-range">正在加载账单…</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="billing-table">
+                <thead><tr><th>时间</th><th>类型</th><th>订单</th><th>客户</th><th>金额</th><th>参考号 / 备注</th></tr></thead>
+                <tbody id="billing-table"></tbody>
+              </table>
+            </div>
+          </article>
         </section>
 
         <section class="view" data-view="products">

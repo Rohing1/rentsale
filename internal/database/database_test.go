@@ -10,8 +10,20 @@ func TestEmbeddedMigrationsArePresent(t *testing.T) {
 	if err != nil {
 		fatalf(t, "read embedded migrations: %v", err)
 	}
-	if len(entries) < 3 || entries[0].Name() != "001_init.sql" || entries[1].Name() != "002_harden_inventory_invariants.sql" || entries[2].Name() != "003_add_idempotency.sql" {
+	expected := []string{
+		"001_init.sql",
+		"002_harden_inventory_invariants.sql",
+		"003_add_idempotency.sql",
+		"004_make_payment_reference_global.sql",
+		"005_add_payment_report_index.sql",
+	}
+	if len(entries) < len(expected) {
 		fatalf(t, "unexpected migrations: %#v", entries)
+	}
+	for index, name := range expected {
+		if entries[index].Name() != name {
+			fatalf(t, "migration %d = %q, want %q", index, entries[index].Name(), name)
+		}
 	}
 }
 

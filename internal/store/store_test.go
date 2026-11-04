@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestValidateProductInput(t *testing.T) {
@@ -67,5 +68,37 @@ func TestPaymentRequiresReferenceBeforeDatabaseAccess(t *testing.T) {
 	_, err := repository.RecordPayment(context.Background(), 1, PaymentInput{Direction: "charge", AmountCents: 100})
 	if err == nil {
 		t.Fatal("expected payment without reference to be rejected")
+	}
+}
+
+func TestBillingPeriodBounds(t *testing.T) {
+	anchor := time.Date(2026, time.November, 4, 12, 0, 0, 0, time.FixedZone("test", 8*60*60))
+	cases := []struct {
+		period string
+		start  string
+		end    string
+	}{
+		{period: "day", start: "2026-11-04", end: "2026-11-05"},
+		{period: "week", start: "2026-11-02", end: "2026-11-09"},
+		{period: "month", start: "2026-11-01", end: "2026-12-01"},
+		{period: "quarter", start: "2026-10-01", end: "2027-01-01"},
+		{period: "year", start: "2026-01-01", end: "2027-01-01"},
+	}
+	for _, testCase := range cases {
+		start, end, err := billingPeriodBounds(testCase.period, anchor)
+		if err != nil {
+			t.Fatalf("billingPeriodBounds(%q) error = %v", testCase.period, err)
+		}
+		if start.Format(dateLayout) != testCase.start || end.Format(dateLayout) != testCase.end {
+			t.Fatalf("billingPeriodBounds(%q) = %s to %s, want %s to %s", testCase.period, start.Format(dateLayout), end.Format(dateLayout), testCase.start, testCase.end)
+		}
+	}
+}
+
+func TestBillingReportRejectsInvalidPeriodBeforeDatabaseAccess(t *testing.T) {
+	repository := &Store{}
+	_, err := repository.BillingReport(context.Background(), "fortnight", "2026-11-04")
+	if err == nil {
+		t.Fatal("expected invalid billing period to be rejected")
 	}
 }
