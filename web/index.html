@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="RentSale 租赁售卖一体化后台" />
+    <title>RentSale · 租赁售卖管理平台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#dashboard" data-view-link="dashboard">
+          <span class="brand-mark">R</span>
+          <span><strong>RentSale</strong><small>租赁 · 售卖 · 库存</small></span>
+        </a>
+        <nav aria-label="主导航">
+          <button class="nav-link active" data-view-link="dashboard">概览</button>
+          <button class="nav-link" data-view-link="products">商品与库存</button>
+          <button class="nav-link" data-view-link="customers">客户</button>
+          <button class="nav-link" data-view-link="new-order">新建订单</button>
+          <button class="nav-link" data-view-link="orders">订单中心</button>
+        </nav>
+        <div class="sidebar-note">
+          <strong>库存最终裁决</strong>
+          <p>提交订单时由数据库事务锁定库存，页面上的“可用量”仅用于展示。</p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">运营控制台</p>
+            <h1 id="page-title">概览</h1>
+          </div>
+          <div class="top-actions">
+            <label class="api-key-field" title="仅当服务器设置了 APP_API_KEY 时需要填写；只保存在本页内存中。">
+              <span>API Key</span>
+              <input id="api-key" type="password" autocomplete="off" placeholder="可选：本地开发通常留空" />
+            </label>
+            <button class="button secondary" id="refresh-button">刷新数据</button>
+          </div>
+        </header>
+
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+        <section class="view active" data-view="dashboard">
+          <div class="hero">
+            <div>
+              <p class="eyebrow">共享库存 · 交易快照 · 可追溯履约</p>
+              <h2>把“能不能租、能不能卖”交给一致的库存规则。</h2>
+              <p>销售会扣减现货；租赁会在所选日期区间占用库存。两者在订单提交时统一校验。</p>
+            </div>
+            <button class="button" data-view-link="new-order">创建订单</button>
+          </div>
+          <div class="metrics" id="dashboard-metrics"></div>
+          <div class="split-grid">
+            <article class="panel">
+              <div class="panel-heading">
+                <div><p class="eyebrow">快速开始</p><h3>推荐操作顺序</h3></div>
+              </div>
+              <ol class="steps">
+                <li><span>1</span>建立可租、可售的商品及现货库存</li>
+                <li><span>2</span>录入客户，生成销售或租赁订单</li>
+                <li><span>3</span>按状态完成取货、归还、收退款与库存闭环</li>
+              </ol>
+            </article>
+            <article class="panel safety-panel">
+              <div class="panel-heading"><div><p class="eyebrow">本版内置控制</p><h3>减少高频纠纷</h3></div></div>
+              <ul class="check-list">
+                <li>订单保存商品名称与价格快照</li>
+                <li>销售取消自动恢复库存</li>
+                <li>租赁归还或取消释放日期占用</li>
+                <li>库存变更、订单状态、支付均留有记录</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="products">
+          <div class="section-intro">
+            <div><p class="eyebrow">商品目录</p><h2>商品与库存</h2><p>价格以元输入，系统以“分”精确保存，避免浮点金额误差。</p></div>
+          </div>
+          <div class="two-column">
+            <form class="panel form-card" id="product-form">
+              <div class="panel-heading"><div><h3>新增商品</h3><p>同一商品可以同时出租和售卖。</p></div></div>
+              <div class="form-grid">
+                <label>SKU<input name="sku" required maxlength="64" placeholder="例如 CAM-001" /></label>
+                <label>商品名称<input name="name" required maxlength="160" placeholder="例如 索尼 A7C 相机" /></label>
+                <label>资产类型<input name="product_type" maxlength="40" value="general" placeholder="设备 / 车辆 / 房源" /></label>
+                <label>分类<input name="category" maxlength="80" placeholder="例如 摄影器材" /></label>
+                <label class="full">仓点 / 位置<input name="location" maxlength="120" placeholder="例如 上海徐汇门店" /></label>
+                <label class="full">商品描述<textarea name="description" maxlength="5000" placeholder="配件、适用场景、交接要求等"></textarea></label>
+                <label>日租金（元）<input name="daily_rent" type="number" min="0" step="0.01" value="0" required /></label>
+                <label>售价（元）<input name="sale_price" type="number" min="0" step="0.01" value="0" required /></label>
+                <label>单件押金（元）<input name="deposit" type="number" min="0" step="0.01" value="0" required /></label>
+                <label>现货数量<input name="stock_on_hand" type="number" min="0" step="1" value="1" required /></label>
+              </div>
+              <div class="toggles">
+                <label class="toggle"><input name="rent_enabled" type="checkbox" checked /><span>支持租赁</span></label>
+                <label class="toggle"><input name="sell_enabled" type="checkbox" checked /><span>支持售卖</span></label>
+              </div>
+              <button class="button" type="submit">保存商品</button>
+            </form>
+            <article class="panel product-list-panel">
+              <div class="panel-heading">
+                <div><h3>商品列表</h3><p id="product-count">加载中…</p></div>
+                <input class="search" id="product-search" placeholder="搜索 SKU、名称或分类" />
+              </div>
+              <div class="table-wrap"><table><thead><tr><th>商品</th><th>模式</th><th>租 / 售价格</th><th>现货</th><th>操作</th></tr></thead><tbody id="product-table"></tbody></table></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="customers">
+          <div class="section-intro"><div><p class="eyebrow">客户资料</p><h2>客户</h2><p>身份证件仅建议保存脱敏引用；原件应交由合规 KYC 服务保管。</p></div></div>
+          <div class="two-column">
+            <form class="panel form-card" id="customer-form">
+              <div class="panel-heading"><div><h3>新增客户</h3><p>手机号在当前版本中作为唯一识别字段。</p></div></div>
+              <div class="form-grid">
+                <label>姓名<input name="full_name" required maxlength="120" /></label>
+                <label>手机号<input name="phone" required maxlength="40" inputmode="tel" /></label>
+                <label>邮箱<input name="email" maxlength="180" type="email" /></label>
+                <label>证件脱敏引用<input name="identity_ref" maxlength="120" placeholder="例如 310***********1234" /></label>
+                <label class="full">备注<textarea name="note" maxlength="2000"></textarea></label>
+              </div>
+              <button class="button" type="submit">保存客户</button>
+            </form>
+            <article class="panel">
+              <div class="panel-heading"><div><h3>客户列表</h3><p id="customer-count">加载中…</p></div><input class="search" id="customer-search" placeholder="搜索姓名、手机、邮箱" /></div>
+              <div class="table-wrap"><table><thead><tr><th>客户</th><th>联系方式</th><th>证件引用</th><th>创建时间</th></tr></thead><tbody id="customer-table"></tbody></table></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" data-view="new-order">
+          <div class="section-intro"><div><p class="eyebrow">下单</p><h2>新建订单</h2><p>先选交易类型。租赁按左闭右开区间计算天数：归还当天可被下一单起租。</p></div></div>
+          <form class="panel order-form" id="order-form">
+            <div class="form-grid order-basics">
+              <label>交易类型<select id="order-type" name="order_type"><option value="rental">租赁订单</option><option value="sale">销售订单</option></select></label>
+              <label>客户<select id="order-customer" name="customer_id" required></select></label>
+              <label class="rental-only">起租日期<input id="start-date" name="start_date" type="date" required /></label>
+              <label class="rental-only">归还日期<input id="end-date" name="end_date" type="date" required /></label>
+              <label class="full">备注<textarea name="notes" maxlength="2000" placeholder="交接、配送、报价说明等"></textarea></label>
+            </div>
+            <div class="order-items-heading"><div><h3>订单商品</h3><p>同一商品只需添加一次；提交时库存将再次核验。</p></div><div class="add-line"><select id="order-product"></select><input id="order-quantity" type="number" min="1" value="1" /><button class="button secondary" id="add-order-item" type="button">添加商品</button></div></div>
+            <div id="order-items" class="order-items"></div>
+            <div class="order-summary"><span>订单金额将按提交时的商品价格创建快照。</span><button class="button" type="submit">创建并确认订单</button></div>
+          </form>
+        </section>
+
+        <section class="view" data-view="orders">
+          <div class="section-intro row-intro"><div><p class="eyebrow">订单履约</p><h2>订单中心</h2><p>销售确认时已扣库存；租赁在取货、归还、取消时改变库存承诺状态。</p></div><div class="filters"><select id="order-type-filter"><option value="">全部类型</option><option value="rental">租赁</option><option value="sale">销售</option></select><select id="order-status-filter"><option value="">全部状态</option><option value="confirmed">已确认</option><option value="checked_out">租赁中</option><option value="returned">已归还</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select></div></div>
+          <article class="panel"><div class="table-wrap"><table class="orders-table"><thead><tr><th>订单</th><th>客户</th><th>商品</th><th>金额</th><th>状态</th><th>操作</th></tr></thead><tbody id="order-table"></tbody></table></div></article>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

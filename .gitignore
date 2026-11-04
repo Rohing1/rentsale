@@ -1,0 +1,7 @@
+.env
+.env.local
+.env.production
+bin/
+tmp/
+coverage.out
+release/
